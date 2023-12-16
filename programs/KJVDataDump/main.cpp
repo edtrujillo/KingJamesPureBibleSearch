@@ -21,9 +21,9 @@
 **
 ****************************************************************************/
 
-#include "../KJVCanOpener/dbstruct.h"
 #include "../KJVCanOpener/dbDescriptors.h"
 #include "../KJVCanOpener/ReadDB.h"
+#include "../KJVCanOpener/dbstruct.h"
 #include "../KJVCanOpener/VerseRichifier.h"
 #include "../KJVCanOpener/PhraseNavigator.h"
 #include "../KJVCanOpener/Translator.h"
@@ -307,6 +307,16 @@ int main(int argc, char *argv[])
 	CRelIndex ndxLastVPL;
 	int lineCount = 0;
 
+	static QRegularExpression regexNoPunctuation(QRegularExpression("[\\[\\]()\\.\\–,:;\\’\\'\\!\\?]"));
+	static QRegularExpression regexNormalVowels(QRegularExpression("[aeiou]"));
+
+	static QRegularExpression regexYSurroundedByConsonants(QRegularExpression("[bcdfghjklmnpqrstvwxz]y[bcdfghjklmnpqrstvwxz]"));
+	static QRegularExpression regexAyOyEyIyUy(QRegularExpression("ay|oy|ey|iy|uy"));
+	static QRegularExpression regexTrailingY(QRegularExpression("y$|y "));
+	static QRegularExpression regexImbeddedSpaces(QRegularExpression("\\s"));
+	static QRegularExpression regexAnyOccurrenceOfY(QRegularExpression("y"));
+
+
 	while (ndxCurrent.isSet()) {
 		if ((bSkipColophons && ndxCurrent.isColophon()) ||
 			(bSkipSuperscriptions && ndxCurrent.isSuperscription())) {
@@ -398,40 +408,70 @@ int main(int argc, char *argv[])
 						}
 						if (bOutputVerseText && nLetterCount > 0) {
 							QString verse = strParsedVerse.toUtf8().data();
-							QString clean = QString(verse).toLower().simplified().replace(QRegularExpression("[\\[\\]()\.,:;!?]"), "");
+							QString clean = QString(verse).toLower().simplified().replace(regexNoPunctuation, "");
 							QString cleanNoSpaces = QString(clean).remove(' ');
-							int basicVowelCount = clean.count(QRegularExpression("[aeiou]"));
-							int yCount = clean.count(QRegularExpression("y$|y "));
-							int consonantCount = cleanNoSpaces.length() - (basicVowelCount + yCount);
+							int basicVowelCount = clean.count(regexNormalVowels);
+							int yAsVowelCount = 0;
+							int rawYCountBothConsonantsAndVowels = clean.count(regexAnyOccurrenceOfY);
 
 							bool qPrint = true;
 
-							if (cleanNoSpaces.length() == nLetterCount) {
+							if (cleanNoSpaces.length()) { // == nLetterCount) {
 
-								QStringList list = clean.split(QRegularExpression("\\s"));
+								QStringList list = clean.split(regexImbeddedSpaces);
 
 								foreach(QString item, list) {
-									int isYbetween2Consonants = item.count(QRegularExpression("[bcdfghjklmnpqrstvwxz]y[bcdfghjklmnpqrstvwxz]"));
+									int isYbetween2Consonants = item.count(regexYSurroundedByConsonants);
 
 									if (isYbetween2Consonants > 0) {
-										basicVowelCount += isYbetween2Consonants;
-										consonantCount -= isYbetween2Consonants;
+										yAsVowelCount += isYbetween2Consonants;
+									}
+
+									int isAyOyEyIy = item.count(regexAyOyEyIyUy);
+									if (isAyOyEyIy > 0) {
+										yAsVowelCount += isAyOyEyIy;
+									} else {
+										int endOfWord = item.count(regexTrailingY);
+										if (endOfWord > 0) {
+											yAsVowelCount += endOfWord;
+										}
 									}
 								}
 
+								int consonantCount = cleanNoSpaces.length() - (basicVowelCount + yAsVowelCount);
+
+								int wordCount = list.count();
+
 								if (nVowelCount > 0) {
-									if (basicVowelCount + yCount != nVowelCount) {
+									if (basicVowelCount + yAsVowelCount != nVowelCount) {
 										qPrint = false;
 									}
 								}
 
 								if (qPrint) {
 									// Print verse reference prefix:
-									std::cout << ++lineCount << " " << pBibleDatabase->bookOSISAbbr(ndxCurrent).toUtf8().data()
-											  << " " << ndxCurrent.chapter() << ":" << ndxCurrent.verse() << " ";
+									std::cout << ++lineCount << "\t" << pBibleDatabase->bookName(ndxCurrent).toUtf8().data()
+											  << " " << ndxCurrent.chapter() << ":" << ndxCurrent.verse() << "\t";
 
-									std::cout << verse.toStdString() << " (V:" << basicVowelCount + yCount << ", C:" << consonantCount << ")";
+									int letterCount = consonantCount + basicVowelCount + yAsVowelCount;
+
+
+									std::cout << verse.toStdString() << "\t" << wordCount << "\t" << consonantCount << "\t" << basicVowelCount + yAsVowelCount << "\t" << letterCount;
+
+									// This is used for sorting the spreadsheet by lettercount, vowelcount and finally by verse number
+									QString letterString = QStringLiteral("%1").arg(letterCount, 4, 10, QLatin1Char('0'));
+									QString vowelString = QStringLiteral("%1").arg(basicVowelCount + yAsVowelCount, 4, 10, QLatin1Char('0'));
+									QString verseString = QStringLiteral("%1").arg(lineCount, 5, 10, QLatin1Char('0'));
+
+									std::cout << "\t" << letterString.toStdString() << vowelString.toStdString() << verseString.toStdString();
+
+									if (yAsVowelCount > 0 && rawYCountBothConsonantsAndVowels != yAsVowelCount) {
+										std::cout << "\t" << yAsVowelCount;
+										std::cout << "\t" << rawYCountBothConsonantsAndVowels;
+									}
+
 									std::cout << std::endl;
+
 								}
 							}
 						}
